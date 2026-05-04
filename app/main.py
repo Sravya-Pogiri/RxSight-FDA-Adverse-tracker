@@ -711,46 +711,80 @@ with tab2:
     if model is None:
         st.markdown('<div class="empty-state"><div class="empty-state-icon">⬡</div>Not enough data points for regression (need ≥ 4 quarters)</div>', unsafe_allow_html=True)
     else:
+        lr_stats = stats.get('lr', {})
+        dt_stats = stats.get('dt', {})
+
         fig_trend = go.Figure()
         actual_data = overlay_df[overlay_df['actual'].notna()].copy()
         train_data  = overlay_df[overlay_df['split'] == 'train']
         test_data   = overlay_df[overlay_df['split'] == 'test']
         fcast_data  = overlay_df[overlay_df['split'] == 'forecast']
 
+        # Actual reports
         fig_trend.add_trace(go.Scatter(
             x=actual_data['quarter_end_date'],
             y=actual_data['actual'],
             name='Actual Reports',
             mode='lines+markers',
             fill='tozeroy',
-            fillcolor=f"rgba(74,144,226,0.06)",
+            fillcolor='rgba(74,144,226,0.06)',
             line=dict(color=PALETTE["blue"], width=2),
-            marker=dict(size=6, color=PALETTE["blue"], line=dict(width=1.5, color=PALETTE["surface"])),
+            marker=dict(size=6, color=PALETTE["blue"],
+                        line=dict(width=1.5, color=PALETTE["surface"])),
             hovertemplate='Q %{x|%b %Y}<br><b>%{y:,} reports</b><extra>Actual</extra>',
         ))
+
+        # Linear Regression fit (train)
         fig_trend.add_trace(go.Scatter(
             x=train_data['quarter_end_date'],
-            y=train_data['fitted'],
-            name='Model Fit',
+            y=train_data['lr_fitted'],
+            name='Linear Regression (Train)',
             mode='lines',
-            line=dict(color=PALETTE["teal"], width=1.5, dash='dot'),
-            hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Model Fit</extra>',
+            line=dict(color=PALETTE["text_muted"], width=1.5, dash='dot'),
+            hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Linear Regression</extra>',
         ))
+
+        # Linear Regression test predictions
         if not test_data.empty:
             fig_trend.add_trace(go.Scatter(
                 x=test_data['quarter_end_date'],
-                y=test_data['fitted'],
-                name='Predicted (Test)',
+                y=test_data['lr_fitted'],
+                name='Linear Regression (Test)',
                 mode='lines+markers',
-                line=dict(color=PALETTE["amber"], width=1.5, dash='dash'),
-                marker=dict(symbol='x', size=9, color=PALETTE["amber"]),
-                hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Test Prediction</extra>',
+                line=dict(color=PALETTE["text_muted"], width=1.5, dash='dash'),
+                marker=dict(symbol='x', size=9, color=PALETTE["text_muted"]),
+                hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Linear Regression Test</extra>',
             ))
+
+        # Decision Tree fit (train)
+        fig_trend.add_trace(go.Scatter(
+            x=train_data['quarter_end_date'],
+            y=train_data['dt_fitted'],
+            name='Decision Tree (Train)',
+            mode='lines',
+            line=dict(color=PALETTE["teal"], width=1.5, dash='dot'),
+            hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Decision Tree</extra>',
+        ))
+
+        # Decision Tree test predictions
+        if not test_data.empty:
+            fig_trend.add_trace(go.Scatter(
+                x=test_data['quarter_end_date'],
+                y=test_data['dt_fitted'],
+                name='Decision Tree (Test)',
+                mode='lines+markers',
+                line=dict(color=PALETTE["teal"], width=1.5, dash='dash'),
+                marker=dict(symbol='diamond', size=9, color=PALETTE["teal"],
+                            line=dict(width=1.5, color=PALETTE["surface"])),
+                hovertemplate='Q %{x|%b %Y}<br><b>%{y:,.0f}</b><extra>Decision Tree Test</extra>',
+            ))
+
+        # Forecast (linear regression only, DT can't extrapolate)
         if not fcast_data.empty:
             fig_trend.add_trace(go.Scatter(
                 x=fcast_data['quarter_end_date'],
-                y=fcast_data['fitted'],
-                name='Forecast',
+                y=fcast_data['lr_fitted'],
+                name='Forecast (Linear Regression)',
                 mode='lines+markers',
                 line=dict(color=PALETTE["coral"], width=2, dash='longdash'),
                 marker=dict(symbol='diamond', size=10, color=PALETTE["coral"],
@@ -760,62 +794,156 @@ with tab2:
 
         fig_trend.update_layout(**CHART_THEME)
         fig_trend.update_layout(
-            height=380,
+            height=420,
             xaxis=dict(title="Quarter"),
             yaxis=dict(title="Reports"),
             hovermode='x unified',
         )
-        st.plotly_chart(fig_trend, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_trend, use_container_width=True,
+                        config={"displayModeBar": False})
 
-        st.markdown('<div class="section-label">Model Evaluation</div>', unsafe_allow_html=True)
-
-        r2_train = stats.get('r2_train', '—')
-        r2_test  = stats.get('r2_test')
-        rmse     = stats.get('rmse_test')
-        slope    = stats.get('slope', '—')
-
+        # --- Model Comparison Table ---
+        st.markdown('<div class="section-label">Model Comparison</div>',
+                    unsafe_allow_html=True)
         st.markdown(f"""
-        <div class="eval-grid">
-            <div class="eval-cell">
-                <div class="eval-cell-label">R² Train</div>
-                <div class="eval-cell-val">{r2_train}</div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:24px;">
+            <div style="background:{PALETTE['surface']}; border:1px solid {PALETTE['border']};
+                        border-top:2px solid {PALETTE['text_muted']}; border-radius:10px; padding:18px;">
+                <div style="font-size:11px; font-weight:600; letter-spacing:0.1em;
+                            text-transform:uppercase; color:{PALETTE['text_muted']}; margin-bottom:14px;">
+                    Linear Regression
+                </div>
+                <div class="eval-grid" style="grid-template-columns: repeat(2,1fr);">
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">R² Train</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['text_muted']};">
+                            {lr_stats.get('r2_train','—')}
+                        </div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">R² Test</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['text_muted']};">
+                            {lr_stats.get('r2_test','—')}
+                        </div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">RMSE Test</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['text_muted']};">
+                            {lr_stats.get('rmse_test','—')}
+                        </div>
+                        <div class="eval-cell-unit">reports</div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">Slope</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['text_muted']};">
+                            {lr_stats.get('slope','—')}
+                        </div>
+                        <div class="eval-cell-unit">reports/day</div>
+                    </div>
+                </div>
             </div>
-            <div class="eval-cell">
-                <div class="eval-cell-label">R² Test</div>
-                <div class="eval-cell-val" style="color:{PALETTE['blue']};">{r2_test if r2_test is not None else '—'}</div>
-            </div>
-            <div class="eval-cell">
-                <div class="eval-cell-label">RMSE Test</div>
-                <div class="eval-cell-val" style="color:{PALETTE['amber']};">{rmse if rmse is not None else '—'}</div>
-                <div class="eval-cell-unit">reports</div>
-            </div>
-            <div class="eval-cell">
-                <div class="eval-cell-label">Slope</div>
-                <div class="eval-cell-val" style="color:{PALETTE['coral']};">{slope}</div>
-                <div class="eval-cell-unit">reports / day</div>
+            <div style="background:{PALETTE['surface']}; border:1px solid {PALETTE['border']};
+                        border-top:2px solid {PALETTE['teal']}; border-radius:10px; padding:18px;">
+                <div style="font-size:11px; font-weight:600; letter-spacing:0.1em;
+                            text-transform:uppercase; color:{PALETTE['teal']}; margin-bottom:14px;">
+                    Decision Tree Improved Model
+                </div>
+                <div class="eval-grid" style="grid-template-columns: repeat(2,1fr);">
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">R² Train</div>
+                        <div class="eval-cell-val">{dt_stats.get('r2_train','—')}</div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">R² Test</div>
+                        <div class="eval-cell-val">{dt_stats.get('r2_test','—')}</div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">RMSE Test</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['amber']};">
+                            {dt_stats.get('rmse_test','—')}
+                        </div>
+                        <div class="eval-cell-unit">reports</div>
+                    </div>
+                    <div class="eval-cell">
+                        <div class="eval-cell-label">Max Depth</div>
+                        <div class="eval-cell-val" style="color:{PALETTE['purple']};">4</div>
+                        <div class="eval-cell-unit">tree depth</div>
+                    </div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
+        st.markdown(f"""
+        <div style="background:{PALETTE['surface2']}; border:1px solid {PALETTE['border2']};
+                    border-radius:8px; padding:14px 18px; font-size:12px;
+                    color:{PALETTE['text_muted']}; margin-bottom:24px;">
+            ⚠️ The 2-quarter forecast uses <b style="color:{PALETTE['text_sec']}">linear regression</b>
+            because decision trees cannot extrapolate beyond the range of training data —
+            they will always predict the last seen value rather than a new one.
+            The decision tree is shown for its superior fit on historical data.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Forecast cards
         if not fcast_data.empty:
-            st.markdown('<div class="section-label">2-Quarter Forecast</div>', unsafe_allow_html=True)
-            forecast_vals  = fcast_data['fitted'].tolist()
+            st.markdown('<div class="section-label">2-Quarter Forecast</div>',
+                        unsafe_allow_html=True)
+
             forecast_dates = fcast_data['quarter_end_date'].dt.strftime('%b %Y').tolist()
+            lr_vals = fcast_data['lr_fitted'].tolist()
+            
+            # DT repeats last seen training value for both forecast quarters
+            dt_last = overlay_df[overlay_df['split'] == 'train']['dt_fitted'].iloc[-1]
+
+            st.markdown(f"""
+            <div style="font-size:11px; font-weight:600; letter-spacing:0.1em;
+                        text-transform:uppercase; color:{PALETTE['text_muted']}; 
+                        margin-bottom:10px;">
+                Linear Regression
+            </div>
+            """, unsafe_allow_html=True)
+
             f1, f2 = st.columns(2, gap="large")
             with f1:
                 st.markdown(f"""
                 <div class="forecast-card">
                     <div class="forecast-date">Next Quarter · {forecast_dates[0]}</div>
-                    <div class="forecast-val">{int(forecast_vals[0]):,}</div>
+                    <div class="forecast-val">{int(lr_vals[0]):,}</div>
                     <div class="forecast-unit">projected reports</div>
                 </div>""", unsafe_allow_html=True)
             with f2:
                 st.markdown(f"""
                 <div class="forecast-card" style="border-top-color:{PALETTE['blue']};">
                     <div class="forecast-date">Q+2 · {forecast_dates[1]}</div>
-                    <div class="forecast-val">{int(forecast_vals[1]):,}</div>
+                    <div class="forecast-val">{int(lr_vals[1]):,}</div>
                     <div class="forecast-unit">projected reports</div>
                 </div>""", unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div style="font-size:11px; font-weight:600; letter-spacing:0.1em;
+                        text-transform:uppercase; color:{PALETTE['teal']}; 
+                        margin-top:20px; margin-bottom:10px;">
+                Decision Tree Improved Model
+            </div>
+            """, unsafe_allow_html=True)
+
+            d1, d2 = st.columns(2, gap="large")
+            with d1:
+                st.markdown(f"""
+                <div class="forecast-card" style="border-top-color:{PALETTE['teal']};">
+                    <div class="forecast-date">Next Quarter · {forecast_dates[0]}</div>
+                    <div class="forecast-val">{int(dt_last):,}</div>
+                    <div class="forecast-unit">projected reports (flat — last training value)</div>
+                </div>""", unsafe_allow_html=True)
+            with d2:
+                st.markdown(f"""
+                <div class="forecast-card" style="border-top-color:{PALETTE['teal']};">
+                    <div class="forecast-date">Q+2 · {forecast_dates[1]}</div>
+                    <div class="forecast-val">{int(dt_last):,}</div>
+                    <div class="forecast-unit">projected reports (flat — last training value)</div>
+                </div>""", unsafe_allow_html=True)
+                    
 
 
 with tab3:

@@ -108,6 +108,8 @@ def get_reaction_trends(drug_name):
 
 
 def train_trend_regression(df, test_size=0.2):
+    from sklearn.tree import DecisionTreeRegressor
+
     if df is None or df.empty or len(df) < 4:
         return None, {}, pd.DataFrame()
 
@@ -125,53 +127,82 @@ def train_trend_regression(df, test_size=0.2):
     X_test  = test_df[['days']]
     y_test  = test_df['report_count']
 
-    model = LinearRegression()
-    model.fit(X_train, y_train)
+    # --- Model 1: Linear Regression (original) ---
+    lr_model = LinearRegression()
+    lr_model.fit(X_train, y_train)
 
-    y_train_pred = model.predict(X_train)
-    r2_train = r2_score(y_train, y_train_pred)
+    lr_train_pred = lr_model.predict(X_train)
+    lr_r2_train = r2_score(y_train, lr_train_pred)
 
-    eval_stats = {
-        'r2_train': round(r2_train, 3),
+    lr_stats = {
+        'r2_train': round(lr_r2_train, 3),
         'r2_test':  None,
         'rmse_test': None,
-        'slope': round(float(model.coef_[0]), 4),
+        'slope': round(float(lr_model.coef_[0]), 4),
     }
     if len(test_df) > 0:
-        y_test_pred = model.predict(X_test)
-        eval_stats['r2_test']   = round(r2_score(y_test, y_test_pred), 3)
-        eval_stats['rmse_test'] = round(float(np.sqrt(mean_squared_error(y_test, y_test_pred))), 2)
+        lr_test_pred = lr_model.predict(X_test)
+        lr_stats['r2_test']   = round(r2_score(y_test, lr_test_pred), 3)
+        lr_stats['rmse_test'] = round(float(np.sqrt(mean_squared_error(y_test, lr_test_pred))), 2)
 
+    # --- Model 2: Decision Tree Regressor (improved) ---
+    dt_model = DecisionTreeRegressor(max_depth=4, random_state=42)
+    dt_model.fit(X_train, y_train)
+
+    dt_train_pred = dt_model.predict(X_train)
+    dt_r2_train = r2_score(y_train, dt_train_pred)
+
+    dt_stats = {
+        'r2_train': round(dt_r2_train, 3),
+        'r2_test':  None,
+        'rmse_test': None,
+    }
+    if len(test_df) > 0:
+        dt_test_pred = dt_model.predict(X_test)
+        dt_stats['r2_test']   = round(r2_score(y_test, dt_test_pred), 3)
+        dt_stats['rmse_test'] = round(float(np.sqrt(mean_squared_error(y_test, dt_test_pred))), 2)
+
+    # --- Build overlay_df with both model predictions ---
     overlay_rows = []
+    last_day = int(df['days'].max())
+
     for _, row in train_df.iterrows():
         overlay_rows.append({
             'quarter_end_date': row['quarter_end_date'],
-            'actual':  row['report_count'],
-            'fitted':  model.predict([[row['days']]])[0],
-            'split':   'train',
+            'actual':           row['report_count'],
+            'lr_fitted':        lr_model.predict([[row['days']]])[0],
+            'dt_fitted':        dt_model.predict([[row['days']]])[0],
+            'split':            'train',
         })
     for _, row in test_df.iterrows():
         overlay_rows.append({
             'quarter_end_date': row['quarter_end_date'],
-            'actual':  row['report_count'],
-            'fitted':  model.predict([[row['days']]])[0],
-            'split':   'test',
+            'actual':           row['report_count'],
+            'lr_fitted':        lr_model.predict([[row['days']]])[0],
+            'dt_fitted':        dt_model.predict([[row['days']]])[0],
+            'split':            'test',
         })
 
-    last_day = int(df['days'].max())
+    # Forecast: decision tree can't extrapolate beyond training range,
+    # so we use linear regression for the 2-quarter forecast
     for i in range(1, 3):
-        future_day = last_day + i * 91
+        future_day  = last_day + i * 91
         future_date = start_date + pd.Timedelta(days=future_day)
         overlay_rows.append({
             'quarter_end_date': future_date,
-            'actual':  None,
-            'fitted':  model.predict([[future_day]])[0],
-            'split':   'forecast',
+            'actual':           None,
+            'lr_fitted':        lr_model.predict([[future_day]])[0],
+            'dt_fitted':        None,   # DT can't extrapolate
+            'split':            'forecast',
         })
 
     overlay_df = pd.DataFrame(overlay_rows)
-    return model, eval_stats, overlay_df
 
+    combined_stats = {
+        'lr': lr_stats,
+        'dt': dt_stats,
+    }
+    return lr_model, combined_stats, overlay_df
 
 def cluster_reactions(reactions_list, n_clusters=5):
     if not reactions_list or len(reactions_list) < 5:
