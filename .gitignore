@@ -1,0 +1,26 @@
+# Environments and OS
+.venv/
+.env
+__pycache__/
+.DS_Store
+
+# Large raw data files - too big for GitHub
+data/raw/ASCII/
+data/raw/Deleted/
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

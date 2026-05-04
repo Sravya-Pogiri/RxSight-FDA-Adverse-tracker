@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: faers_postgres
+    environment:
+      POSTGRES_USER: faers_user
+      POSTGRES_PASSWORD: faers_password
+      POSTGRES_DB: faers_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:6
+    container_name: faers_mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo_admin
+      MONGO_INITDB_ROOT_PASSWORD: mongo_password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  adminer:
+    image: adminer
+    platform: linux/amd64
+    container_name: faers_adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+    name: fda-adverse-tracker_postgres_data
+    external: true
+  mongo_data:
+    name: fda-adverse-tracker_mongo_data
+    external: true

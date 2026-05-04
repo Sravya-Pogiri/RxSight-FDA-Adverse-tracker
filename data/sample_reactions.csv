@@ -1,0 +1,101 @@
+reaction_id,report_id,reaction_term,body_system,severity
+171,104268123,abnormal weight gain,Other,Standard
+172,104268123,gynaecomastia,Other,Standard
+173,104268123,hyperprolactinaemia,Other,Standard
+431,106733632,bradyphrenia,Other,Standard
+432,106733632,automatic bladder,Other,Standard
+433,106733632,multiple sclerosis relapse,Other,Standard
+434,106733632,visual impairment,Other,Standard
+435,106733632,cognitive disorder,Other,Standard
+436,106733632,headache,Neurological,Standard
+437,106733632,hypoaesthesia,Other,Standard
+544,108320302,hypoacusis,Other,Standard
+545,108320302,tooth fracture,Musculoskeletal,Standard
+562,109433053,increased appetite,Other,Standard
+563,109433053,weight increased,Other,Standard
+564,109433053,gynaecomastia,Other,Standard
+565,109433053,emotional disorder,Other,Standard
+625,1098933911,pain,Other,Other
+742,111188103,gynaecomastia,Other,Standard
+743,111188103,hyperprolactinaemia,Other,Standard
+744,111188103,abnormal weight gain,Other,Standard
+836,112244582,asthenia,Other,Standard
+837,112244582,immunisation reaction,Other,Standard
+838,112244582,frustration tolerance decreased,Other,Standard
+839,112244582,stress,Other,Standard
+840,112244582,fatigue,Other,Standard
+841,112244582,cognitive disorder,Other,Standard
+842,112244582,confusional state,Neurological,Standard
+946,113187122,therapeutic product effect decreased,Other,Standard
+1412,117177393,drug ineffective,Other,Standard
+1543,118188913,abnormal weight gain,Other,Standard
+1544,118188913,product use in unapproved indication,Other,Standard
+1545,118188913,off label use,Other,Standard
+1546,118188913,gynaecomastia,Other,Standard
+1809,120986123,dental cyst,Other,Standard
+1810,120986123,off label use,Other,Standard
+1811,120986123,sinusitis,Other,Standard
+1977,123039723,adverse event,Other,Standard
+1978,123119473,sleep apnoea syndrome,Other,Standard
+2078,123671793,product dose omission issue,Other,Standard
+2195,124457542,off label use,Other,Standard
+2273,125593072,candida infection,Other,Standard
+2626,1274135915,abdominal discomfort,Gastrointestinal,Standard
+2627,1274135915,chest pain,Other,Standard
+2628,1274135915,tremor,Neurological,Standard
+2629,1274135915,headache,Neurological,Standard
+2630,1274135915,dysgraphia,Other,Standard
+2631,1274135915,abdominal pain upper,Gastrointestinal,Standard
+2632,1274135915,memory impairment,Other,Standard
+2633,1274135915,drug ineffective,Other,Standard
+2656,127940333,injury,Other,Standard
+2657,127946592,off label use,Other,Standard
+2658,127946592,extrapyramidal disorder,Other,Standard
+3173,130736332,therapeutic product effect decreased,Other,Standard
+3174,130736332,inappropriate schedule of product administration,Other,Standard
+3175,130736332,anxiety,Neurological,Standard
+3176,130736332,prescribed overdose,Other,Standard
+3177,130736332,wrong technique in product usage process,Other,Standard
+3178,130736332,insurance issue,Other,Standard
+3280,1312065023,drug ineffective for unapproved indication,Other,Standard
+3281,1312065023,needle issue,Other,Standard
+3282,1312065023,off label use,Other,Standard
+3283,1312065023,overdose,Other,Standard
+3284,1312065023,incorrect dose administered,Other,Standard
+3342,1314540429,decreased appetite,Other,Standard
+3343,1314540429,fatigue,Other,Standard
+3344,1314540429,osteoarthritis,Musculoskeletal,Standard
+3345,1314540429,ear congestion,Other,Standard
+3346,1314540429,aphonia,Other,Standard
+3347,1314540429,headache,Neurological,Standard
+3348,1314540429,pain,Other,Standard
+3349,1314540429,fibromyalgia,Musculoskeletal,Standard
+3350,1314540429,asthma,Respiratory,Standard
+3351,1314540429,nausea,Gastrointestinal,Standard
+3352,1314540429,depression,Neurological,Standard
+3353,1314540429,thyroid cyst,Other,Standard
+3354,1314540429,illness,Other,Standard
+3355,1314540429,malaise,Other,Standard
+3356,1314540429,sleep apnoea syndrome,Other,Standard
+3357,1314540429,nasopharyngitis,Other,Standard
+3358,1314540429,gait disturbance,Other,Standard
+3359,1314540429,hypoacusis,Other,Standard
+3360,1314540429,pain in extremity,Other,Standard
+3361,1314540429,feeling abnormal,Other,Standard
+3362,1314540429,insomnia,Neurological,Standard
+3369,131804778,pain,Other,Standard
+3370,131804778,product availability issue,Other,Standard
+3371,131804778,fatigue,Other,Standard
+3372,131804778,headache,Neurological,Standard
+3373,131804778,off label use,Other,Standard
+3374,131804778,product dose omission issue,Other,Standard
+3375,131804778,respiratory syncytial virus infection,Respiratory,Standard
+3376,131804778,nausea,Gastrointestinal,Standard
+3377,131804778,pain in extremity,Other,Standard
+3378,131804778,chest discomfort,Other,Standard
+3379,131804778,asthenia,Other,Standard
+3380,131804778,abdominal pain upper,Gastrointestinal,Standard
+3597,133116083,product use in unapproved indication,Other,Standard
+3598,133116083,off label use,Other,Standard
+3599,133116083,emotional disorder,Other,Standard
+3600,133116083,gynaecomastia,Other,Standard
