@@ -5,9 +5,11 @@ import pandas as pd
 from sqlalchemy import text
 from .db_config import get_postgres_engine
 
+# setting up paths so it works on different machines
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASCII_DIR = os.path.join(BASE_DIR, 'data', 'raw', 'ASCII')
 
+# mapping keywords to systems so we can categorize the mess of text data
 BODY_SYSTEM_KEYWORDS = {
     'Cardiovascular': [
         'cardiac', 'heart', 'arrhythmia', 'myocardial', 'hypertension',
@@ -39,6 +41,7 @@ BODY_SYSTEM_KEYWORDS = {
     ],
 }
 
+# assigning scores to outcomes so we can rank how bad a reaction was
 OUTCOME_SEVERITY = {
     'DE': ('Death', 5),
     'LT': ('Life-threatening', 4),
@@ -49,6 +52,7 @@ OUTCOME_SEVERITY = {
     'OT': ('Other', 1),
 }
 
+# regex to strip out dosages like "50mg" so we just get the drug name
 _DOSE_PATTERN = re.compile(
     r'\s*\d+\.?\d*\s*(MG|MCG|ML|G|IU|UNITS?|%|TABLET|CAPSULE|PATCH|INJECTION|SOLUTION|INFUSION)\b.*',
     re.IGNORECASE,
@@ -57,6 +61,10 @@ _NONALPHA_PATTERN = re.compile(r'[^A-Z0-9\s\-]')
 
 
 def upsert_ignore(table, conn, keys, data_iter):
+    """
+    fancy way to insert rows but skip them if they already exist 
+    (prevents the script from crashing on duplicates)
+    """
     from sqlalchemy.dialects.postgresql import insert
     rows = [dict(zip(keys, row)) for row in data_iter]
     stmt = insert(table.table).values(rows).on_conflict_do_nothing()
@@ -64,6 +72,7 @@ def upsert_ignore(table, conn, keys, data_iter):
 
 
 def get_latest_file(pattern, quarter=None):
+    # helps find the right text file for a specific quarter (like 25Q1)
     files = glob.glob(os.path.join(ASCII_DIR, pattern))
     if quarter:
         files = [f for f in files if quarter in f]
@@ -71,6 +80,7 @@ def get_latest_file(pattern, quarter=None):
 
 
 def normalize_drug_name(name):
+    # cleaning up drug names: upper case, remove dosage info, and weird characters
     if pd.isna(name):
         return name
     name = str(name).upper().strip()
@@ -80,6 +90,7 @@ def normalize_drug_name(name):
 
 
 def map_body_system(reaction_term):
+    # simple loop to check if a reaction (like 'heart attack') matches our system list
     if pd.isna(reaction_term):
         return 'Other'
     term_lower = str(reaction_term).lower()
@@ -92,14 +103,17 @@ def map_body_system(reaction_term):
 
 def run_etl(testing=True, quarter=None):
     engine = get_postgres_engine()
+    # if testing, we only take 10k rows so it doesn't take forever
     nrows = 10000 if testing else None
     reports_df = None
 
+    # grab all the different raw files we need
     demo_file = get_latest_file("DEMO*.txt", quarter)
     drug_file = get_latest_file("DRUG*.txt", quarter)
     reac_file = get_latest_file("REAC*.txt", quarter)
     outc_file = get_latest_file("OUTC*.txt", quarter)
 
+    # 1. Process Demographics (the people)
     if demo_file:
         print(f"loading {os.path.basename(demo_file)}")
         demo_df = pd.read_csv(demo_file, sep='$', dtype=str, encoding='latin1', nrows=nrows, low_memory=False, on_bad_lines='skip')
@@ -116,6 +130,7 @@ def run_etl(testing=True, quarter=None):
             .reindex(columns=list(col_map.values()))
             .copy()
         )
+        # fix types and drop broken IDs
         reports_df['age'] = pd.to_numeric(reports_df['age'], errors='coerce')
         reports_df['report_date'] = pd.to_datetime(
             reports_df['report_date'], format='%Y%m%d', errors='coerce'
@@ -129,10 +144,12 @@ def run_etl(testing=True, quarter=None):
             'reports', engine, if_exists='append', index=False, chunksize=10000, method=upsert_ignore
         )
 
+    # 2. Process Drugs
     if drug_file:
         print(f"loading {os.path.basename(drug_file)}")
         drug_df = pd.read_csv(drug_file, sep='$', dtype=str, encoding='latin1', nrows=nrows, low_memory=False, on_bad_lines='skip')
 
+        # clean names and chop off really long strings so they fit in DB
         drug_df['drugname'] = drug_df['drugname'].apply(normalize_drug_name)
         drug_df['drugname'] = drug_df['drugname'].str[:490]
         drug_df['prod_ai'] = drug_df['prod_ai'].str[:490]
@@ -147,12 +164,14 @@ def run_etl(testing=True, quarter=None):
         print(f"  -> {len(unique_drugs):,} unique drugs")
         unique_drugs.to_sql('drugs', engine, if_exists='append', index=False, chunksize=10000, method=upsert_ignore)
 
+        # linking the 'Primary Suspect' (PS) drug back to the report
         role_col = 'role_cod' if 'role_cod' in drug_df.columns else None
         if role_col:
             ps_drugs = drug_df[drug_df[role_col] == 'PS'][['primaryid', 'drugname']].drop_duplicates('primaryid')
         else:
             ps_drugs = drug_df[['primaryid', 'drugname']].drop_duplicates('primaryid')
 
+        # need to get IDs from DB to map them correctly
         with engine.connect() as conn:
             db_drugs = pd.read_sql("SELECT drug_id, brand_name FROM drugs", conn)
 
@@ -161,6 +180,7 @@ def run_etl(testing=True, quarter=None):
         ps_merged.columns = ['report_id', 'drug_id']
         ps_merged['drug_id'] = ps_merged['drug_id'].astype(int)
 
+        # updating the reports table with the actual drug IDs we just found
         if not ps_merged.empty:
             print(f"  linking {len(ps_merged):,} reports to drugs...")
             with engine.begin() as conn:
@@ -176,6 +196,7 @@ def run_etl(testing=True, quarter=None):
                        AND r.drug_id IS NULL
                 """))
 
+    # 3. Process Reactions
     if reac_file and reports_df is not None:
         print(f"loading {os.path.basename(reac_file)}")
         reac_df = pd.read_csv(
@@ -192,15 +213,18 @@ def run_etl(testing=True, quarter=None):
         reac_db_df['reaction_term'] = reac_db_df['reaction_term'].str.lower().str.strip()
         reac_db_df.drop_duplicates(subset=['report_id', 'reaction_term'], inplace=True)
 
+        # tag which body system it is
         reac_db_df['body_system'] = reac_db_df['reaction_term'].apply(map_body_system)
         reac_db_df['severity'] = 'Standard'
 
+        # make sure we don't import reactions for reports that don't exist
         valid_ids = set(reports_df['report_id'].tolist())
         reac_db_df = reac_db_df[reac_db_df['report_id'].isin(valid_ids)]
 
         print(f"  -> {len(reac_db_df):,} reactions")
         reac_db_df.to_sql('reactions', engine, if_exists='append', index=False, chunksize=10000, method=upsert_ignore)
 
+    # 4. Process Outcomes & Update Severity
     if outc_file:
         print(f"loading {os.path.basename(outc_file)}")
         outc_df = pd.read_csv(outc_file, sep='$', dtype=str, encoding='latin1', nrows=nrows, low_memory=False, on_bad_lines='skip')
@@ -220,6 +244,7 @@ def run_etl(testing=True, quarter=None):
         print(f"  -> {len(outc_db_df):,} outcomes")
         outc_db_df.to_sql('outcomes', engine, if_exists='append', index=False, chunksize=10000, method=upsert_ignore)
 
+        # converting codes (DE, HO) to readable labels and numbers
         outc_db_df['severity_label'] = outc_db_df['outcome_type'].map(
             {k: v[0] for k, v in OUTCOME_SEVERITY.items()}
         ).fillna('Other')
@@ -227,12 +252,14 @@ def run_etl(testing=True, quarter=None):
             {k: v[1] for k, v in OUTCOME_SEVERITY.items()}
         ).fillna(1)
 
+        # if a report has multiple outcomes, we only want the worst one (highest score)
         report_severity = (
             outc_db_df.sort_values('severity_score', ascending=False)
             .drop_duplicates(subset=['report_id'])
             [['report_id', 'severity_label']]
         )
 
+        # update the reactions table so each reaction shows how serious it was
         print(f"  backfilling severity on {len(report_severity):,} reactions...")
         with engine.begin() as conn:
             conn.execute(text(
@@ -250,6 +277,7 @@ def run_etl(testing=True, quarter=None):
 
 
 if __name__ == "__main__":
+    # loop through the 2025 quarters and run the script
     for q in ['25Q1', '25Q2', '25Q3', '25Q4']:
         print(f"\n=== Running ETL for {q} ===")
         run_etl(testing=True, quarter=q)

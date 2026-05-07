@@ -1,7 +1,9 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from pymongo import MongoClient
 
+# pull everything from env vars so credentials aren't hardcoded
+# defaults are fine for local docker dev but swap these out in prod
 POSTGRES_USER = os.getenv("POSTGRES_USER", "faers_user")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "faers_password")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
@@ -24,6 +26,8 @@ def get_mongo_client():
     return MongoClient(MONGO_URI)
 
 def init_postgres_schema(engine):
+    # all four tables in one shot — reactions and outcomes both reference reports
+    # so order matters here (drugs and reports have to exist first)
     schema_sql = """
     CREATE TABLE IF NOT EXISTS drugs (
         drug_id SERIAL PRIMARY KEY,
@@ -53,11 +57,10 @@ def init_postgres_schema(engine):
         report_id VARCHAR(50) REFERENCES reports(report_id),
         outcome_type VARCHAR(50)
     );
-    
+
     CREATE INDEX IF NOT EXISTS idx_drug_id ON reports(drug_id);
     CREATE INDEX IF NOT EXISTS idx_report_date ON reports(report_date);
     """
-    from sqlalchemy import text
     with engine.connect() as conn:
         conn.execute(text(schema_sql))
         conn.commit()
@@ -67,8 +70,7 @@ if __name__ == "__main__":
     engine = get_postgres_engine()
     init_postgres_schema(engine)
     print("done")
-    
+
     print(f"testing mongo connection ({MONGO_URI})...")
     client = get_mongo_client()
     print("connected")
-

@@ -1,70 +1,56 @@
 import pandas as pd
 import numpy as np
+import requests
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import PCA
+from sqlalchemy import text
 from .db_config import get_postgres_engine
 
 
 def get_reaction_trends(drug_name):
-    import requests
-
+    # we pull from both the local db and the live API then merge them
+    # whichever source has a higher count for a given quarter wins
     db_counts = {}
     api_counts = {}
 
-    # pull from DB
-    try:
-        from sqlalchemy import text
-        engine = get_postgres_engine()
-        query = text("""
-            SELECT date_trunc('quarter', r.report_date) AS quarter_end_date,
-                   count(*) AS report_count
-              FROM reports r
-              JOIN drugs d ON r.drug_id = d.drug_id
-             WHERE d.brand_name = :drug_name
-               AND r.report_date IS NOT NULL
-             GROUP BY date_trunc('quarter', r.report_date)
-             ORDER BY quarter_end_date ASC
-        """)
-        df = pd.read_sql(query, engine, params={'drug_name': drug_name})
-        for _, row in df.iterrows():
-            key = pd.Timestamp(row['quarter_end_date']).normalize()
-            db_counts[key] = int(row['report_count'])
-        print(f"DB returned {len(db_counts)} quarters for {drug_name}")
-    except Exception as e:
-        print(f"DB trend query failed ({e})")
+    engine = get_postgres_engine()
+    query = text("""
+        SELECT date_trunc('quarter', r.report_date) AS quarter_end_date,
+               count(*) AS report_count
+          FROM reports r
+          JOIN drugs d ON r.drug_id = d.drug_id
+         WHERE d.brand_name = :drug_name
+           AND r.report_date IS NOT NULL
+         GROUP BY date_trunc('quarter', r.report_date)
+         ORDER BY quarter_end_date ASC
+    """)
+    df = pd.read_sql(query, engine, params={'drug_name': drug_name})
+    for _, row in df.iterrows():
+        key = pd.Timestamp(row['quarter_end_date']).normalize()
+        db_counts[key] = int(row['report_count'])
+    print(f"DB returned {len(db_counts)} quarters for {drug_name}")
 
-    # pull from OpenFDA API
-    try:
-        quarters = [
-            ('2020Q1', '20200101', '20200331'),
-            ('2020Q2', '20200401', '20200630'),
-            ('2020Q3', '20200701', '20200930'),
-            ('2020Q4', '20201001', '20201231'),
-            ('2021Q1', '20210101', '20210331'),
-            ('2021Q2', '20210401', '20210630'),
-            ('2021Q3', '20210701', '20210930'),
-            ('2021Q4', '20211001', '20211231'),
-            ('2022Q1', '20220101', '20220331'),
-            ('2022Q2', '20220401', '20220630'),
-            ('2022Q3', '20220701', '20220930'),
-            ('2022Q4', '20221001', '20221231'),
-            ('2023Q1', '20230101', '20230331'),
-            ('2023Q2', '20230401', '20230630'),
-            ('2023Q3', '20230701', '20230930'),
-            ('2023Q4', '20231001', '20231231'),
-            ('2024Q1', '20240101', '20240331'),
-            ('2024Q2', '20240401', '20240630'),
-            ('2024Q3', '20240701', '20240930'),
-            ('2024Q4', '20241001', '20241231'),
-            ('2025Q1', '20250101', '20250331'),
-            ('2025Q2', '20250401', '20250630'),
-            ('2025Q3', '20250701', '20250930'),
-            ('2025Q4', '20251001', '20251231'),
-        ]
-        for label, start, end in quarters:
+    # hitting the API once per quarter — limit=1 so we just get the total count
+    # from the meta field, not the actual records
+    quarters = [
+        ('2020Q1', '20200101', '20200331'), ('2020Q2', '20200401', '20200630'),
+        ('2020Q3', '20200701', '20200930'), ('2020Q4', '20201001', '20201231'),
+        ('2021Q1', '20210101', '20210331'), ('2021Q2', '20210401', '20210630'),
+        ('2021Q3', '20210701', '20210930'), ('2021Q4', '20211001', '20211231'),
+        ('2022Q1', '20220101', '20220331'), ('2022Q2', '20220401', '20220630'),
+        ('2022Q3', '20220701', '20220930'), ('2022Q4', '20221001', '20221231'),
+        ('2023Q1', '20230101', '20230331'), ('2023Q2', '20230401', '20230630'),
+        ('2023Q3', '20230701', '20230930'), ('2023Q4', '20231001', '20231231'),
+        ('2024Q1', '20240101', '20240331'), ('2024Q2', '20240401', '20240630'),
+        ('2024Q3', '20240701', '20240930'), ('2024Q4', '20241001', '20241231'),
+        ('2025Q1', '20250101', '20250331'), ('2025Q2', '20250401', '20250630'),
+        ('2025Q3', '20250701', '20250930'), ('2025Q4', '20251001', '20251231'),
+    ]
+    for label, start, end in quarters:
+        try:
             r = requests.get(
                 "https://api.fda.gov/drug/event.json",
                 params={
@@ -77,30 +63,25 @@ def get_reaction_trends(drug_name):
                 count = r.json().get('meta', {}).get('results', {}).get('total', 0)
                 key = pd.Timestamp(end).normalize()
                 api_counts[key] = count
-        print(f"API returned {len(api_counts)} quarters for {drug_name}")
-    except Exception as e:
-        print(f"OpenFDA trend fetch failed ({e})")
+        except requests.RequestException:
+            pass
 
-    # merge - use max of DB and API for each quarter to avoid double counting
-    # normalize all keys to timezone-naive
+    # strip timezone info if it snuck in — causes merge issues otherwise
     db_counts = {k.tz_localize(None) if k.tzinfo else k: v for k, v in db_counts.items()}
     api_counts = {k.tz_localize(None) if k.tzinfo else k: v for k, v in api_counts.items()}
 
     all_keys = set(db_counts.keys()) | set(api_counts.keys())
     merged = {}
     for key in all_keys:
-        db_val = db_counts.get(key, 0)
-        api_val = api_counts.get(key, 0)
-        merged[key] = max(db_val, api_val)
+        merged[key] = max(db_counts.get(key, 0), api_counts.get(key, 0))
 
     if len(merged) >= 4:
-        combined_df = pd.DataFrame([
+        return pd.DataFrame([
             {'quarter_end_date': k, 'report_count': v}
             for k, v in sorted(merged.items())
         ])
-        return combined_df
 
-    # final fallback
+    # not enough real data — fall back to a sample so the charts still render
     print("not enough data, using sample")
     dates = pd.date_range(start='2020-01-01', periods=12, freq='QE')
     counts = [100, 150, 130, 180, 210, 205, 250, 280, 310, 290, 350, 400]
@@ -115,46 +96,39 @@ def train_trend_regression(df, test_size=0.2):
 
     df = df.copy().sort_values('quarter_end_date').reset_index(drop=True)
 
+    # convert dates to days-since-start so sklearn doesn't complain about datetime inputs
     start_date = df['quarter_end_date'].min()
     df['days'] = (df['quarter_end_date'] - start_date).dt.days
 
+    # 80/20 split — need at least 1 row in test though
     split_idx = max(1, int(len(df) * 0.8))
     train_df = df.iloc[:split_idx]
     test_df  = df.iloc[split_idx:]
 
-    X_train = train_df[['days']]
-    y_train = train_df['report_count']
-    X_test  = test_df[['days']]
-    y_test  = test_df['report_count']
+    X_train, y_train = train_df[['days']], train_df['report_count']
+    X_test, y_test   = test_df[['days']], test_df['report_count']
 
-    # --- Model 1: Linear Regression (original) ---
     lr_model = LinearRegression()
     lr_model.fit(X_train, y_train)
 
-    lr_train_pred = lr_model.predict(X_train)
-    lr_r2_train = r2_score(y_train, lr_train_pred)
-
     lr_stats = {
-        'r2_train': round(lr_r2_train, 3),
-        'r2_test':  None,
+        'r2_train':  round(r2_score(y_train, lr_model.predict(X_train)), 3),
+        'r2_test':   None,
         'rmse_test': None,
-        'slope': round(float(lr_model.coef_[0]), 4),
+        'slope':     round(float(lr_model.coef_[0]), 4),
     }
     if len(test_df) > 0:
         lr_test_pred = lr_model.predict(X_test)
         lr_stats['r2_test']   = round(r2_score(y_test, lr_test_pred), 3)
         lr_stats['rmse_test'] = round(float(np.sqrt(mean_squared_error(y_test, lr_test_pred))), 2)
 
-    # --- Model 2: Decision Tree Regressor (improved) ---
+    # decision tree as a comparison — it'll overfit on train but that's kind of the point
     dt_model = DecisionTreeRegressor(max_depth=4, random_state=42)
     dt_model.fit(X_train, y_train)
 
-    dt_train_pred = dt_model.predict(X_train)
-    dt_r2_train = r2_score(y_train, dt_train_pred)
-
     dt_stats = {
-        'r2_train': round(dt_r2_train, 3),
-        'r2_test':  None,
+        'r2_train':  round(r2_score(y_train, dt_model.predict(X_train)), 3),
+        'r2_test':   None,
         'rmse_test': None,
     }
     if len(test_df) > 0:
@@ -162,7 +136,7 @@ def train_trend_regression(df, test_size=0.2):
         dt_stats['r2_test']   = round(r2_score(y_test, dt_test_pred), 3)
         dt_stats['rmse_test'] = round(float(np.sqrt(mean_squared_error(y_test, dt_test_pred))), 2)
 
-    # --- Build overlay_df with both model predictions ---
+    # build a single dataframe with actual + fitted values so the chart can overlay everything
     overlay_rows = []
     last_day = int(df['days'].max())
 
@@ -183,8 +157,7 @@ def train_trend_regression(df, test_size=0.2):
             'split':            'test',
         })
 
-    # Forecast: decision tree can't extrapolate beyond training range,
-    # so we use linear regression for the 2-quarter forecast
+    # tack on 2 future quarters — 91 days is close enough to a quarter
     for i in range(1, 3):
         future_day  = last_day + i * 91
         future_date = start_date + pd.Timedelta(days=future_day)
@@ -192,29 +165,25 @@ def train_trend_regression(df, test_size=0.2):
             'quarter_end_date': future_date,
             'actual':           None,
             'lr_fitted':        lr_model.predict([[future_day]])[0],
-            'dt_fitted':        None,   # DT can't extrapolate
+            'dt_fitted':        None,   # dt can't extrapolate so we leave this blank
             'split':            'forecast',
         })
 
-    overlay_df = pd.DataFrame(overlay_rows)
+    return lr_model, {'lr': lr_stats, 'dt': dt_stats}, pd.DataFrame(overlay_rows)
 
-    combined_stats = {
-        'lr': lr_stats,
-        'dt': dt_stats,
-    }
-    return lr_model, combined_stats, overlay_df
 
 def cluster_reactions(reactions_list, n_clusters=5):
     if not reactions_list or len(reactions_list) < 5:
         return pd.DataFrame()
 
+    # tfidf on the raw text — works surprisingly well for medical terms
     vectorizer = TfidfVectorizer(stop_words='english')
     X = vectorizer.fit_transform(reactions_list)
 
-    k = min(n_clusters, len(reactions_list))
-    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=min(n_clusters, len(reactions_list)), random_state=42, n_init=10)
     labels = kmeans.fit_predict(X)
 
+    # squish down to 2d so we can actually plot it
     pca = PCA(n_components=2, random_state=42)
     coords = pca.fit_transform(X.toarray())
 
@@ -227,86 +196,43 @@ def cluster_reactions(reactions_list, n_clusters=5):
 
 
 def get_demographics(drug_name):
-    try:
-        from sqlalchemy import text
-        engine = get_postgres_engine()
-        age_query = text("""
-            SELECT r.age
-              FROM reports r
-              JOIN drugs d ON r.drug_id = d.drug_id
-             WHERE d.brand_name = :drug_name
-               AND r.age IS NOT NULL
-               AND r.age BETWEEN 0 AND 120
-             LIMIT 5000
-        """)
-        sex_query = text("""
-            SELECT r.sex, count(*) AS count
-              FROM reports r
-              JOIN drugs d ON r.drug_id = d.drug_id
-             WHERE d.brand_name = :drug_name
-             GROUP BY r.sex
-        """)
-        age_df = pd.read_sql(age_query, engine, params={'drug_name': drug_name})
-        sex_df = pd.read_sql(sex_query, engine, params={'drug_name': drug_name})
+    engine = get_postgres_engine()
+    age_df = pd.read_sql(text("""
+        SELECT r.age FROM reports r JOIN drugs d ON r.drug_id = d.drug_id
+         WHERE d.brand_name = :drug_name AND r.age BETWEEN 0 AND 120 LIMIT 5000
+    """), engine, params={'drug_name': drug_name})
 
-        if not age_df.empty and not sex_df.empty:
-            return age_df, sex_df
-    except Exception as e:
-        print(f"demographics query failed ({e}), using mock data")
+    sex_df = pd.read_sql(text("""
+        SELECT r.sex, count(*) AS count FROM reports r JOIN drugs d ON r.drug_id = d.drug_id
+         WHERE d.brand_name = :drug_name GROUP BY r.sex
+    """), engine, params={'drug_name': drug_name})
+
+    # if the db came back empty, use dummy data so the charts don't crash
+    if not age_df.empty:
+        return age_df, sex_df
 
     rng = np.random.default_rng(42)
-    ages = rng.normal(loc=55, scale=18, size=300).clip(0, 100)
-    age_df = pd.DataFrame({'age': ages})
+    age_df = pd.DataFrame({'age': rng.normal(55, 18, 300).clip(0, 100)})
     sex_df = pd.DataFrame({'sex': ['M', 'F', 'UNK'], 'count': [140, 120, 40]})
     return age_df, sex_df
 
 
 def get_severity_breakdown(drug_name):
-    try:
-        from sqlalchemy import text
-        engine = get_postgres_engine()
-        query = text("""
-            SELECT rx.severity, count(*) AS count
-              FROM reactions rx
-              JOIN reports r  ON rx.report_id = r.report_id
-              JOIN drugs d    ON r.drug_id = d.drug_id
-             WHERE d.brand_name = :drug_name
-             GROUP BY rx.severity
-             ORDER BY count DESC
-        """)
-        df = pd.read_sql(query, engine, params={'drug_name': drug_name})
-        if not df.empty:
-            return df
-    except Exception as e:
-        print(f"severity query failed ({e}), using mock data")
+    engine = get_postgres_engine()
+    query = text("""
+        SELECT rx.severity, count(*) AS count
+          FROM reactions rx
+          JOIN reports r  ON rx.report_id = r.report_id
+          JOIN drugs d    ON r.drug_id = d.drug_id
+         WHERE d.brand_name = :drug_name
+         GROUP BY rx.severity ORDER BY count DESC
+    """)
+    df = pd.read_sql(query, engine, params={'drug_name': drug_name})
+    if not df.empty:
+        return df
 
+    # placeholder so the donut chart renders even without a db connection
     return pd.DataFrame({
         'severity': ['Other', 'Hospitalization', 'Life-threatening', 'Death', 'Disability'],
         'count':    [220, 85, 40, 25, 15],
     })
-
-
-if __name__ == "__main__":
-    drug = "IBUPROFEN"
-    print(f"=== Trend: {drug} ===")
-    trends = get_reaction_trends(drug)
-    model, stats, overlay = train_trend_regression(trends)
-    print(stats)
-    print(overlay.tail(4))
-
-    print(f"\n=== Demographics: {drug} ===")
-    age_df, sex_df = get_demographics(drug)
-    print(age_df.describe())
-    print(sex_df)
-
-    print(f"\n=== Severity: {drug} ===")
-    sev = get_severity_breakdown(drug)
-    print(sev)
-
-    print(f"\n=== Cluster test ===")
-    test_reactions = [
-        "cardiac arrest", "heart failure", "nausea", "vomiting", "headache",
-        "dizziness", "arrhythmia", "rash", "fatigue", "anaemia",
-    ]
-    cluster_df = cluster_reactions(test_reactions)
-    print(cluster_df)
